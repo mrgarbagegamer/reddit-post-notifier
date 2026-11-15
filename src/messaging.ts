@@ -7,19 +7,19 @@ type Context = 'popup' | 'options' | 'background';
 const messageListeners = new Map<PortMessageId, MessageListener>();
 
 export async function sendMessage(id: PortMessageId, payload?: PortMessagePayload) {
-    try {
-        const message: PortMessage = { id, payload };
-        const response = await chrome.runtime.sendMessage(message);
-        return response;
-    }
-    catch (error) {
-        const msg = (error as Error).message;
-        if (msg === 'Could not establish connection. Receiving end does not exist.') {
-            console.warn(msg);
-            return;
+    const message: PortMessage = { id, payload };
+    
+    // In MV3, chrome.runtime.sendMessage returns a promise.
+    // We catch the error to prevent it from bubbling up as an "uncaught" error
+    // which can sometimes interfere with Service Worker health.
+    return chrome.runtime.sendMessage(message).catch((error) => {
+        const msg = error.message;
+        if (msg.includes('Could not establish connection')) {
+            // This is expected when the popup/options pages are closed.
+            return; 
         }
-        console.error(error, msg);
-    }
+        console.error('Message failed:', id, msg);
+    });
 }
 
 let listener: Parameters<typeof browser.runtime.onMessage.addListener>[0];

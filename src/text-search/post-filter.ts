@@ -30,7 +30,7 @@ function getNegatives(rule: FilterRule) {
     });
 }
 
-//* * Filter out posts that don't fit given search queries */
+/** Filter out posts that don't fit given search queries */
 export function postFilter<T extends SearchableRedditPost>(
     posts: T[],
     queriesLists: FilterRule[],
@@ -38,44 +38,55 @@ export function postFilter<T extends SearchableRedditPost>(
 ): T[] {
     const usedFields = fields.map((field) => {
         const result: DocField = { field };
-
-        // match author field without any modifications
         if (field === 'author')
             result.options = { normalize: false, stemmer: false, tokenizer: false, queryTokenizer: false };
-        // disable stemming for flair
         if (field === 'link_flair_text')
             result.options = { stemmer: false };
         return result;
     });
 
     const doc = new Document({ fields: usedFields, id: 'id' });
-    posts.forEach(p => doc.add(p.data));
-    const idList = posts.map(p => p.data.id);
+    
+    // Create a fast-lookup Map and normalize IDs to strings
+    const postsMap = new Map<string, T>();
+    posts.forEach((p) => {
+        const stringId = String(p.data.id);
+        doc.add(p.data);
+        postsMap.set(stringId, p);
+    });
 
-    const result = new Set<TextId>();
+    const finalMatchedIds = new Set<string>();
+    const allIds = Array.from(postsMap.keys());
 
-    for (let i = 0; i < queriesLists.length; i++) {
-        const qList = queriesLists[i];
-        if (!qList)
-            continue;
+    for (const qList of queriesLists) {
+        if (!qList) continue;
 
-        // Separate regex queries (e.g. /pattern/i) from standard ones
-        const regexRules = qList.filter(r => r.query && /^\/.+\/[gimsuy]*$/.test(r.query));
-        const standardRules = qList.filter(r => r.query && !/^\/.+\/[gimsuy]*$/.test(r.query));
+        // Identify Regex vs Standard rules
+        const regexRules = qList.filter(r => 
+            typeof r.query === 'string' && /^\/.+\/[gimsuy]*$/.test(r.query)
+        );
+        const standardRules = qList.filter(r => 
+            typeof r.query === 'string' && !/^\/.+\/[gimsuy]*$/.test(r.query)
+        );
 
-        // Process standard text filters via the built-in Document index
+        // 1. Initial candidates from Standard Positive rules
         const positiveRules = getPositives(standardRules);
-        let filteredIDs = positiveRules.length
-            ? doc.search(positiveRules)
-            : idList;
+        let currentCandidates = positiveRules.length
+            ? doc.search(positiveRules).map(id => String(id))
+            : [...allIds];
 
-        const excludeIDs = getNegatives(standardRules).flatMap(r => doc.search([r]));
-        filteredIDs = filteredIDs.filter(id => !excludeIDs.includes(id));
+        // 2. Remove candidates matching Standard Negative rules
+        const excludeIDs = getNegatives(standardRules)
+            .flatMap(r => doc.search([r]))
+            .map(id => String(id));
+        
+        const excludeSet = new Set(excludeIDs);
+        currentCandidates = currentCandidates.filter(id => !excludeSet.has(id));
 
-        // Apply custom Regex rules manually for precise phrase/order matching
-        filteredIDs.forEach((id) => {
-            const post = posts.find(p => p.data.id === id);
-            if (!post) return;
+        // 3. Filter remaining candidates by Regex rules
+        currentCandidates.forEach((id) => {
+            const post = postsMap.get(id);
+            if (!post?.data) return;
 
             let passesRegex = true;
             for (const rule of regexRules) {
@@ -83,20 +94,23 @@ export function postFilter<T extends SearchableRedditPost>(
                 if (match) {
                     try {
                         const regex = new RegExp(match[1], match[2] || 'i');
-                        const isMatch = regex.test(post.data[rule.field] || '');
+                        const textToTest = String(post.data[rule.field] || '');
+                        const isMatch = regex.test(textToTest);
                         
                         if (rule.queryType === 'negative' && isMatch) passesRegex = false;
                         if (rule.queryType !== 'negative' && !isMatch) passesRegex = false;
                     } catch (e) {
-                        console.error('Invalid Regex', rule.query);
+                        console.warn('Regex parsing failed:', rule.query, e);
                     }
                 }
+                if (!passesRegex) break;
             }
 
             if (passesRegex) {
-                result.add(id);
+                finalMatchedIds.add(id);
             }
         });
     }
-    return posts.filter(p => result.has(p.data.id));
+
+    return posts.filter(p => finalMatchedIds.has(String(p.data.id)));
 }

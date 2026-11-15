@@ -10,7 +10,11 @@ const optPath = 'src/pages/options/';
 
 export const sharedConfig: Partial<UserConfig> = {
     root: r('src/pages'),
-    define: getEnvKeys(),
+    define: {
+        ...getEnvKeys(),
+        // This shim prevents the "process is not defined" error in the service worker
+        'process.env': {}, 
+    },
     resolve: {
         alias: {
             '@assets': r('src/assets'),
