@@ -8,6 +8,15 @@ import type { AuthUser } from '@/storage/storage-types';
 
 const { clientId, clientSecret, redirectUri, userAgent } = config;
 
+function getRedirectUri(): string {
+    try {
+        return browser.identity.getRedirectURL() || redirectUri || '';
+    }
+    catch {
+        return redirectUri || '';
+    }
+}
+
 export interface TokenResponseBody {
     access_token: string;
     refresh_token: string;
@@ -56,7 +65,7 @@ const auth = {
     getAuthURL(authState: string): string {
         const params = {
             response_type: 'code',
-            redirect_uri: encodeURIComponent(redirectUri || ''),
+            redirect_uri: encodeURIComponent(getRedirectUri()),
             client_id: clientId,
             scope: `${scopes.identity.id} ${scopes.read.id} ${scopes.privatemessages.id} ${scopes.history.id}`,
             state: authState,
@@ -98,7 +107,7 @@ const auth = {
     async getTokens(code: string, id: string): Promise<TokenResponseBody> {
         const params = {
             grant_type: 'authorization_code',
-            redirect_uri: encodeURIComponent(redirectUri || ''),
+            redirect_uri: encodeURIComponent(getRedirectUri()),
             code,
         };
 

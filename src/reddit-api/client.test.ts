@@ -58,9 +58,9 @@ describe('HTTP GET request', () => {
         expect(result).toEqual(response);
     });
 
-    it('should have correct public api url', async () => {
+    it('should have correct session api url', async () => {
         fetchMock.mockImplementationOnce((url) => {
-            expect(url).toBe('https://www.reddit.com/endpoint.json?raw_json=1');
+            expect(url).toBe('https://api.reddit.com/endpoint?raw_json=1');
             return jsonResponse(response);
         });
         const reddit = new RedditApiClient();
@@ -68,13 +68,24 @@ describe('HTTP GET request', () => {
         expect(result).toEqual(response);
     });
 
-    it('should have correct public api url with params', async () => {
+    it('should have correct session api url with params', async () => {
         fetchMock.mockImplementationOnce((url) => {
-            expect(url).toBe('https://www.reddit.com/endpoint.json?p1=v1&p2=v2&raw_json=1');
+            expect(url).toBe('https://api.reddit.com/endpoint?p1=v1&p2=v2&raw_json=1');
             return jsonResponse(response);
         });
         const reddit = new RedditApiClient();
         const result = await reddit.GET(endpoint, params);
+        expect(result).toEqual(response);
+    });
+
+    it('should fall back to public api url when session is blocked', async () => {
+        fetchMock.mockImplementationOnce((url) => {
+            expect(url).toBe('https://www.reddit.com/endpoint.json?raw_json=1');
+            return jsonResponse(response);
+        });
+        const reddit = new RedditApiClient();
+        reddit.sessionBlockedUntil = Date.now() + 60000;
+        const result = await reddit.GET(endpoint);
         expect(result).toEqual(response);
     });
 

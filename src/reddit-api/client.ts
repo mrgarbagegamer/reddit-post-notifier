@@ -45,7 +45,9 @@ function getRateLimits(response: Response): RateLimits {
 export default class RedditApiClient {
     authOrigin: string;
     publicOrigin: string;
-    headers: HeadersInit;
+    sessionOrigin: string;
+    sessionBlockedUntil = 0;
+    headers: Record<string, string>;
     accessToken?: string | null;
     onRateLimits?: (rl: RateLimits) => void;
     fetchOpts: RequestInit = {
@@ -55,32 +57,81 @@ export default class RedditApiClient {
     constructor(onRateLimits?: (rl: RateLimits) => void) {
         this.authOrigin = 'https://oauth.reddit.com';
         this.publicOrigin = 'https://www.reddit.com';
+        this.sessionOrigin = 'https://api.reddit.com';
         this.headers = { Accept: 'application/json' };
         this.onRateLimits = onRateLimits;
 
         if (IS_DEV && USE_DEV_SERVER) {
             this.authOrigin = DEV_SERVER;
             this.publicOrigin = DEV_SERVER;
+            this.sessionOrigin = DEV_SERVER;
         }
     }
 
     async GET(endpoint: string, queryParams: unknown = {}) {
         const params = queryParams ? queryParams as Record<string, unknown> : {};
         const query = mapObjToQueryStr({ ...params, raw_json: '1' });
-        const init: RequestInit = { method: 'GET', headers: { ...this.headers }, ...this.fetchOpts };
 
         if (this.accessToken) {
-            if (!init.headers)
-                init.headers = {};
-            const headers = init.headers as Record<string, string | undefined>;
-            headers['User-Agent'] = config.userAgent;
-            headers.Authorization = `bearer ${this.accessToken}`;
-        }
-        const origin = this.accessToken ? this.authOrigin : this.publicOrigin;
-        const actualEndpoint = this.accessToken ? endpoint : `${endpoint}.json`;
-        const result = await fetch(encodeURI(`${origin}${actualEndpoint}?${query}`), init);
+            const headers: Record<string, string> = {
+                ...this.headers,
+                'Authorization': `bearer ${this.accessToken}`,
+            };
+            if (config.userAgent)
+                headers['User-Agent'] = config.userAgent;
 
-        if (this.onRateLimits && !this.accessToken)
+            const init: RequestInit = {
+                method: 'GET',
+                headers,
+                ...this.fetchOpts,
+            };
+            const result = await fetch(encodeURI(`${this.authOrigin}${endpoint}?${query}`), init);
+            if (result.ok)
+                return result.json();
+            try {
+                return await result.json();
+            }
+            catch {
+                throw new Error(`status code: ${result.status}. ${result.statusText}`);
+            }
+        }
+
+        if (Date.now() > this.sessionBlockedUntil) {
+            const init: RequestInit = {
+                method: 'GET',
+                credentials: 'include',
+                ...this.fetchOpts,
+            };
+            try {
+                const result = await fetch(encodeURI(`${this.sessionOrigin}${endpoint}?${query}`), init);
+                if (this.onRateLimits)
+                    this.onRateLimits(getRateLimits(result));
+                if (result.ok)
+                    return result.json();
+                if (result.status === 403)
+                    this.sessionBlockedUntil = Date.now() + 600000;
+                else {
+                    try {
+                        return await result.json();
+                    }
+                    catch {}
+                }
+            }
+            catch (e) {
+                console.error('Session request to api.reddit.com failed', e);
+            }
+        }
+
+        const init: RequestInit = {
+            method: 'GET',
+            headers: {
+                ...this.headers,
+            },
+            ...this.fetchOpts,
+        };
+        const result = await fetch(encodeURI(`${this.publicOrigin}${endpoint}.json?${query}`), init);
+
+        if (this.onRateLimits)
             this.onRateLimits(getRateLimits(result));
 
         if (result.ok)
@@ -91,7 +142,10 @@ export default class RedditApiClient {
             return errorResponse as RedditError;
         }
         catch {
-            throw new Error(`status code: ${result.status}. ${result.statusText}`);
+            const hint = result.status === 403
+                ? ' Reddit is blocking this request - log into reddit.com in this browser or connect an account in Options'
+                : '';
+            throw new Error(`status code: ${result.status}. ${result.statusText}${hint}`);
         }
     }
 

@@ -300,10 +300,7 @@ export default class NotifierApp {
         try {
             accounts = accounts || (await storage.getAccounts());
             const withScopes: RedditScope[] = [
-                redditScopes.identity.id,
                 redditScopes.read.id,
-                redditScopes.privatemessages.id,
-                redditScopes.history.id,
             ];
             const account = getAccountByScope(accounts, withScopes);
             if (!account)
@@ -458,6 +455,8 @@ export default class NotifierApp {
             shouldThrottle = false;
         }
 
+        if (usersList?.length || subredditList?.length || queriesList?.length)
+            await this.setAccessToken(accounts);
         if (usersList) {
             const updated = await this.updateUsersList(usersList, options, isForcedByUser);
             if (updated)
